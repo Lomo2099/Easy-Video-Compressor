@@ -11,7 +11,7 @@ A modern desktop application to compress large video files to a specific target 
 
 ## 🛠️ Prerequisites
 To run this tool, you need:
-1. **Python 3.8+**
+1. **Python 3.12+**
 2. **FFmpeg:** (Crucial for video encoding)
    - **Windows:** Download from [Gyan.dev](https://www.gyan.dev/ffmpeg/builds/) and add to your PATH.
    - **Linux:** `sudo apt install ffmpeg` or `sudo pacman -S ffmpeg`.
