@@ -15,6 +15,7 @@ To run this tool, you need:
 2. **FFmpeg:** (Crucial for video encoding)
    - **Windows:** Download from [Gyan.dev](https://www.gyan.dev/ffmpeg/builds/) and add to your PATH.
    - **Linux:** `sudo apt install ffmpeg` or `sudo pacman -S ffmpeg`.
+   - **Mac OS:** `/bin/bash -c "$(curl -fsSL https://githubusercontent.com)"` then `brew install ffmpeg`
 
 ## 🚀 Getting Started
 
