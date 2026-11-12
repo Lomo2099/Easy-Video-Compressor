@@ -1,10 +1,15 @@
 # 🎬 Video Compressor Pro
 
-A modern desktop application to compress large video files to a specific target percentage of their original size. Built with Python and CustomTkinter for a sleek, user-friendly experience. Now supports **multi-video batch selection** and **simultaneous parallel compression**!
+A modern desktop application to compress large video files to a specific target percentage of their original size. Built with Python and CustomTkinter for a sleek, user-friendly experience.
 
 ## ✨ Features
-* **Multi-Video Batch Upload:** Select multiple video files at once using the file browser.
+* **Drag & Drop Upload:** Easily drag and drop multiple video files or entire folders straight into the GUI.
+* **Multi-Video Batch Upload:** Select multiple video files at once using the file browser or drag-and-drop.
 * **Simultaneous Parallel Compression:** Compresses all selected videos concurrently in background worker threads without freezing the UI.
+* **Custom Save Destination:** 
+  - Clearly displays where output videos are being saved.
+  - Defaults to each video's original folder.
+  - Choose any custom destination folder with **Browse...**, restore the default with **Reset**, or quickly open the target folder in your system file explorer with **Open**.
 * **Per-Video Queue & Progress Tracking:** Real-time status indicators for each video (Ready, Compressing, Done with size savings, or Error).
 * **Flexible Queue Management:** Add more files to the queue, remove individual files, or clear all.
 * **Custom Compression:** Use a slider to set your target file size (from 10% to 90%).
@@ -31,7 +36,7 @@ To run this tool, you need:
 
 2. **Install Python dependencies:**
    ```bash
-   pip install customtkinter moviepy
+   pip install -r requirements.txt
    ```
 
 3. **Run the application:**

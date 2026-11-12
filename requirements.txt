@@ -1,2 +1,12 @@
-Python Modules: customtkinter,moviepy
-App: FFMPEG
+# Video Compressor Pro - Python Dependencies
+customtkinter>=5.2.0
+moviepy>=2.0.0
+tkinterdnd2>=0.3.0
+imageio-ffmpeg>=0.4.0
+pillow>=9.2.0
+numpy>=1.25.0
+
+# Note: FFmpeg system binary is required for media encoding:
+# - macOS:   brew install ffmpeg
+# - Windows: winget install Gyan.FFmpeg (or download from https://www.gyan.dev/ffmpeg/builds/)
+# - Linux:   sudo apt update && sudo apt install ffmpeg

@@ -1,28 +1,59 @@
 import customtkinter as ctk
 import os
 import queue
+import subprocess
+import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tkinter import filedialog, messagebox
 from moviepy import VideoFileClip
 
+# Attempt to import tkinterdnd2 for Drag & Drop support
+try:
+    from tkinterdnd2 import TkinterDnD, DND_FILES
+    HAS_DND = True
+except ImportError:
+    HAS_DND = False
+    TkinterDnD = object
+    DND_FILES = None
+
 # Set the appearance theme
 ctk.set_appearance_mode("System")
 ctk.set_default_color_theme("blue")
 
+# Base window class incorporating DnDWrapper when available
+if HAS_DND:
+    class BaseAppWindow(ctk.CTk, TkinterDnD.DnDWrapper):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            try:
+                self.TkdndVersion = TkinterDnD._require(self)
+                self.dnd_available = True
+            except Exception as e:
+                print(f"TkinterDnD initialization warning: {e}")
+                self.dnd_available = False
+else:
+    class BaseAppWindow(ctk.CTk):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.dnd_available = False
 
-class VideoCompressorApp(ctk.CTk):
+
+class VideoCompressorApp(BaseAppWindow):
+    SUPPORTED_EXTENSIONS = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".m4v", ".wmv"}
+
     def __init__(self):
         super().__init__()
 
         self.title("Media Compressor Pro - Batch Video Compressor")
-        self.geometry("620x660")
-        self.minsize(560, 520)
+        self.geometry("640x720")
+        self.minsize(580, 580)
 
         # State tracking
-        self.selected_files = []  # List of selected file paths
-        self.file_widgets = {}    # Path -> dict of row widgets
+        self.selected_files = []      # List of selected file paths
+        self.file_widgets = {}        # Path -> dict of row widgets
         self.is_compressing = False
+        self.custom_output_dir = ctk.StringVar(value="")  # Empty means same as original source folder
         self.ui_queue = queue.Queue()
 
         # Start periodic UI queue processor for thread-safe UI updates
@@ -34,9 +65,13 @@ class VideoCompressorApp(ctk.CTk):
         )
         self.header_label.pack(pady=(16, 4))
 
+        subtitle_text = "Drag & drop or select multiple videos to compress them simultaneously"
+        if not self.dnd_available:
+            subtitle_text = "Select multiple videos to compress them simultaneously"
+
         self.subtitle_label = ctk.CTkLabel(
             self,
-            text="Upload multiple videos at once and compress them simultaneously",
+            text=subtitle_text,
             font=ctk.CTkFont(size=12),
             text_color="gray",
         )
@@ -69,23 +104,77 @@ class VideoCompressorApp(ctk.CTk):
         )
         self.count_label.pack(side="right")
 
-        # --- Scrollable File List ---
+        # --- Scrollable File List / Drop Area ---
         self.files_scroll_frame = ctk.CTkScrollableFrame(
-            self, height=200, label_text="Selected Video Queue"
+            self, height=190, label_text="Selected Video Queue (Drag & Drop Supported)"
         )
         self.files_scroll_frame.pack(pady=10, padx=20, fill="both", expand=True)
 
         self.empty_label = ctk.CTkLabel(
             self.files_scroll_frame,
-            text="No files selected yet.\nClick 'Select Video Files' to choose one or more videos.",
+            text="⬇️ Drag & Drop video files or folders here\nor click 'Select Video Files' to choose multiple videos.",
             text_color="gray",
             justify="center",
+            font=ctk.CTkFont(size=13),
         )
-        self.empty_label.pack(pady=50)
+        self.empty_label.pack(pady=45)
+
+        # Register Drag & Drop targets if available
+        self._setup_dnd()
+
+        # --- Save Destination Section ---
+        self.dest_frame = ctk.CTkFrame(self)
+        self.dest_frame.pack(pady=(5, 10), padx=20, fill="x")
+
+        self.dest_header = ctk.CTkLabel(
+            self.dest_frame,
+            text="Save Destination:",
+            font=ctk.CTkFont(size=12, weight="bold"),
+        )
+        self.dest_header.pack(anchor="w", padx=12, pady=(8, 2))
+
+        self.dest_subframe = ctk.CTkFrame(self.dest_frame, fg_color="transparent")
+        self.dest_subframe.pack(fill="x", padx=10, pady=(0, 8))
+
+        self.dest_entry = ctk.CTkEntry(
+            self.dest_subframe,
+            placeholder_text="Original video folder (Default)",
+        )
+        self.dest_entry.insert(0, "Original video folder (Default)")
+        self.dest_entry.configure(state="readonly")
+        self.dest_entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
+
+        self.dest_browse_btn = ctk.CTkButton(
+            self.dest_subframe,
+            text="Browse...",
+            width=80,
+            command=self.browse_destination_folder,
+        )
+        self.dest_browse_btn.pack(side="left", padx=2)
+
+        self.dest_reset_btn = ctk.CTkButton(
+            self.dest_subframe,
+            text="Reset",
+            width=60,
+            fg_color="#7f8c8d",
+            hover_color="#95a5a6",
+            command=self.reset_destination_folder,
+        )
+        self.dest_reset_btn.pack(side="left", padx=2)
+
+        self.dest_open_btn = ctk.CTkButton(
+            self.dest_subframe,
+            text="Open",
+            width=60,
+            fg_color="#34495e",
+            hover_color="#2c3e50",
+            command=self.open_destination_folder,
+        )
+        self.dest_open_btn.pack(side="left", padx=2)
 
         # --- Compression Slider ---
         self.slider_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.slider_frame.pack(pady=(10, 5), padx=20, fill="x")
+        self.slider_frame.pack(pady=(5, 5), padx=20, fill="x")
 
         self.slider_label = ctk.CTkLabel(
             self.slider_frame,
@@ -103,7 +192,7 @@ class VideoCompressorApp(ctk.CTk):
         # --- Progress Bar ---
         self.progress_bar = ctk.CTkProgressBar(self, width=500)
         self.progress_bar.set(0)
-        self.progress_bar.pack(pady=(15, 5), padx=20)
+        self.progress_bar.pack(pady=(12, 5), padx=20)
 
         # --- Compress Button ---
         self.compress_btn = ctk.CTkButton(
@@ -119,7 +208,140 @@ class VideoCompressorApp(ctk.CTk):
 
         # --- Status Label ---
         self.status_label = ctk.CTkLabel(self, text="Ready", text_color="gray")
-        self.status_label.pack(pady=(5, 15))
+        self.status_label.pack(pady=(4, 15))
+
+    def _setup_dnd(self):
+        """Registers drag-and-drop targets on the window and scroll frame."""
+        if not self.dnd_available:
+            return
+
+        try:
+            self.drop_target_register(DND_FILES)
+            self.dnd_bind("<<Drop>>", self.on_drop)
+            self.files_scroll_frame.drop_target_register(DND_FILES)
+            self.files_scroll_frame.dnd_bind("<<Drop>>", self.on_drop)
+            self.empty_label.drop_target_register(DND_FILES)
+            self.empty_label.dnd_bind("<<Drop>>", self.on_drop)
+        except Exception as e:
+            print(f"Failed to register DND targets: {e}")
+
+    def on_drop(self, event):
+        """Handles drag-and-drop file/folder drops."""
+        if self.is_compressing:
+            return
+
+        data = event.data
+        if not data:
+            return
+
+        try:
+            raw_paths = self.tk.splitlist(data)
+        except Exception:
+            raw_paths = [data]
+
+        added_count = self._add_valid_paths(raw_paths)
+        if added_count > 0:
+            self.status_label.configure(
+                text=f"Added {added_count} video(s) via Drag & Drop",
+                text_color="#2ecc71",
+            )
+        elif not self.selected_files:
+            self.status_label.configure(
+                text="No supported video files found in dropped items.",
+                text_color="#e74c3c",
+            )
+
+    def _add_valid_paths(self, paths):
+        """Adds video files or scans directories for videos."""
+        added = 0
+        for p in paths:
+            p = p.strip()
+            if os.path.isfile(p):
+                ext = os.path.splitext(p)[1].lower()
+                if ext in self.SUPPORTED_EXTENSIONS and p not in self.selected_files:
+                    self.selected_files.append(p)
+                    added += 1
+            elif os.path.isdir(p):
+                for root, _, files in os.walk(p):
+                    for f in files:
+                        ext = os.path.splitext(f)[1].lower()
+                        fp = os.path.join(root, f)
+                        if ext in self.SUPPORTED_EXTENSIONS and fp not in self.selected_files:
+                            self.selected_files.append(fp)
+                            added += 1
+
+        if added > 0:
+            self.refresh_file_list()
+        return added
+
+    def browse_destination_folder(self):
+        """Allows selecting a custom destination directory for compressed videos."""
+        folder = filedialog.askdirectory(title="Select Save Destination Folder")
+        if folder:
+            self.custom_output_dir.set(folder)
+            self.dest_entry.configure(state="normal")
+            self.dest_entry.delete(0, "end")
+            self.dest_entry.insert(0, folder)
+            self.dest_entry.configure(state="readonly")
+            self.status_label.configure(
+                text=f"Save destination: {folder}", text_color="#3498db"
+            )
+
+    def reset_destination_folder(self):
+        """Resets the save destination back to each original video's source folder."""
+        self.custom_output_dir.set("")
+        self.dest_entry.configure(state="normal")
+        self.dest_entry.delete(0, "end")
+        self.dest_entry.insert(0, "Original video folder (Default)")
+        self.dest_entry.configure(state="readonly")
+        self.status_label.configure(
+            text="Reset save destination to original video folder(s).", text_color="gray"
+        )
+
+    def open_destination_folder(self):
+        """Opens the active destination folder in system file explorer."""
+        custom_dir = self.custom_output_dir.get().strip()
+        target_dir = None
+
+        if custom_dir and os.path.isdir(custom_dir):
+            target_dir = custom_dir
+        elif self.selected_files and os.path.isfile(self.selected_files[0]):
+            target_dir = os.path.dirname(self.selected_files[0])
+
+        if not target_dir or not os.path.exists(target_dir):
+            messagebox.showinfo(
+                "Save Location",
+                "No active folder yet. Select video files or choose a custom destination folder.",
+            )
+            return
+
+        try:
+            if sys.platform == "darwin":
+                subprocess.run(["open", target_dir], check=False)
+            elif os.name == "nt":
+                os.startfile(target_dir)
+            else:
+                subprocess.run(["xdg-open", target_dir], check=False)
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not open directory:\n{e}")
+
+    def get_output_path(self, input_path, percentage):
+        """Computes the target output path based on destination folder preference."""
+        base_name = os.path.basename(input_path)
+        name, ext = os.path.splitext(base_name)
+        suffix = f"_{int(percentage)}pct{ext}"
+
+        custom_dir = self.custom_output_dir.get().strip()
+        if custom_dir and os.path.isdir(custom_dir):
+            dest_dir = custom_dir
+        else:
+            dest_dir = os.path.dirname(input_path)
+
+        os.makedirs(dest_dir, exist_ok=True)
+        out_path = os.path.join(dest_dir, f"{name}{suffix}")
+        if os.path.abspath(out_path) == os.path.abspath(input_path):
+            out_path = os.path.join(dest_dir, f"{name}_{int(percentage)}pct_compressed{ext}")
+        return out_path
 
     def post_to_ui(self, fn, *args, **kwargs):
         """Thread-safe dispatch to the main Tkinter thread."""
@@ -147,10 +369,7 @@ class VideoCompressorApp(ctk.CTk):
             ],
         )
         if files:
-            for file in files:
-                if file not in self.selected_files:
-                    self.selected_files.append(file)
-            self.refresh_file_list()
+            self._add_valid_paths(list(files))
 
     def remove_file(self, file_path):
         """Removes a single file from the selected list."""
@@ -176,11 +395,18 @@ class VideoCompressorApp(ctk.CTk):
         if not self.selected_files:
             self.empty_label = ctk.CTkLabel(
                 self.files_scroll_frame,
-                text="No files selected yet.\nClick 'Select Video Files' to choose one or more videos.",
+                text="⬇️ Drag & Drop video files or folders here\nor click 'Select Video Files' to choose multiple videos.",
                 text_color="gray",
                 justify="center",
+                font=ctk.CTkFont(size=13),
             )
-            self.empty_label.pack(pady=50)
+            self.empty_label.pack(pady=45)
+            if self.dnd_available:
+                try:
+                    self.empty_label.drop_target_register(DND_FILES)
+                    self.empty_label.dnd_bind("<<Drop>>", self.on_drop)
+                except Exception:
+                    pass
             self.count_label.configure(text="0 videos selected")
             return
 
@@ -223,6 +449,16 @@ class VideoCompressorApp(ctk.CTk):
             )
             remove_btn.pack(side="right", padx=5)
 
+            # Register DnD onto rows too
+            if self.dnd_available:
+                try:
+                    row.drop_target_register(DND_FILES)
+                    row.dnd_bind("<<Drop>>", self.on_drop)
+                    name_label.drop_target_register(DND_FILES)
+                    name_label.dnd_bind("<<Drop>>", self.on_drop)
+                except Exception:
+                    pass
+
             self.file_widgets[file_path] = {
                 "row": row,
                 "status_label": status_label,
@@ -238,7 +474,7 @@ class VideoCompressorApp(ctk.CTk):
             return
 
         if not self.selected_files:
-            messagebox.showwarning("No Files", "Please select at least one video file first!")
+            messagebox.showwarning("No Files", "Please select or drop at least one video file first!")
             return
 
         percentage = self.pct_slider.get()
@@ -249,6 +485,8 @@ class VideoCompressorApp(ctk.CTk):
         self.clear_btn.configure(state="disabled")
         self.compress_btn.configure(state="disabled")
         self.pct_slider.configure(state="disabled")
+        self.dest_browse_btn.configure(state="disabled")
+        self.dest_reset_btn.configure(state="disabled")
         for w in self.file_widgets.values():
             w["remove_btn"].configure(state="disabled")
 
@@ -330,10 +568,8 @@ class VideoCompressorApp(ctk.CTk):
             # Guard against invalid or extremely low bitrates
             target_bitrate = max(100_000, int(target_bitrate))
 
-            file_name, file_ext = os.path.splitext(input_path)
-            output_path = f"{file_name}_{int(percentage)}pct{file_ext}"
-            if output_path == input_path:
-                output_path = f"{file_name}_{int(percentage)}pct_compressed{file_ext}"
+            # Compute output path according to destination preference
+            output_path = self.get_output_path(input_path, percentage)
 
             clip.write_videofile(
                 output_path,
@@ -396,6 +632,8 @@ class VideoCompressorApp(ctk.CTk):
         self.clear_btn.configure(state="normal")
         self.compress_btn.configure(state="normal")
         self.pct_slider.configure(state="normal")
+        self.dest_browse_btn.configure(state="normal")
+        self.dest_reset_btn.configure(state="normal")
         for w in self.file_widgets.values():
             w["remove_btn"].configure(state="normal")
 
@@ -411,6 +649,13 @@ class VideoCompressorApp(ctk.CTk):
         saved_mb = max(0.0, total_orig_mb - total_new_mb)
         saved_pct = ((saved_mb / total_orig_mb) * 100) if total_orig_mb > 0 else 0.0
 
+        custom_dir = self.custom_output_dir.get().strip()
+        location_info = (
+            f"Saved in: {custom_dir}"
+            if (custom_dir and os.path.isdir(custom_dir))
+            else "Saved in: Original folder of each video"
+        )
+
         if not failures:
             status_msg = f"Completed all {len(successes)} video(s) successfully!"
             status_color = "#2ecc71"
@@ -419,7 +664,8 @@ class VideoCompressorApp(ctk.CTk):
                 f"Successfully compressed {len(successes)} video(s) simultaneously.\n\n"
                 f"Original Size: {total_orig_mb:.2f} MB\n"
                 f"New Size: {total_new_mb:.2f} MB\n"
-                f"Space Saved: {saved_mb:.2f} MB ({saved_pct:.1f}%)"
+                f"Space Saved: {saved_mb:.2f} MB ({saved_pct:.1f}%)\n\n"
+                f"{location_info}"
             )
             messagebox.showinfo(summary_title, summary_body)
         else:
@@ -431,7 +677,8 @@ class VideoCompressorApp(ctk.CTk):
                 f"Processed {len(results)} video(s).\n"
                 f"Successful: {len(successes)}\n"
                 f"Failed: {len(failures)}\n\n"
-                f"Space Saved: {saved_mb:.2f} MB\n\n"
+                f"Space Saved: {saved_mb:.2f} MB\n"
+                f"{location_info}\n\n"
                 f"Errors:\n{fail_details}"
             )
             messagebox.showwarning(summary_title, summary_body)
